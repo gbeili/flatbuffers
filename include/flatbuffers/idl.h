@@ -356,9 +356,24 @@ struct IDLOptions {
   bool allow_non_utf8;
 
   // Possible options for the more general generator below.
-  enum Language { kJava, kCSharp, kGo, kMAX };
+  enum Language {
+    kJava   = 1 << 0,
+    kCSharp = 1 << 1,
+    kGo     = 1 << 2,
+    kCpp    = 1 << 3,
+    kJs     = 1 << 4,
+    kPython = 1 << 5,
+    kPhp    = 1 << 6,
+    kJson   = 1 << 7,
+    kBinary = 1 << 8,
+    kMAX
+  };
 
   Language lang;
+
+  // The corresponding language bit will be set if a language is included
+  // for code generation.
+  unsigned long lang_to_generate;
 
   IDLOptions()
     : strict_json(false),
@@ -378,7 +393,8 @@ struct IDLOptions {
       cpp_object_api_pointer_type("std::unique_ptr"),
       union_value_namespacing(true),
       allow_non_utf8(false),
-      lang(IDLOptions::kJava) {}
+      lang(IDLOptions::kJava),
+      lang_to_generate(0) {}
 };
 
 // This encapsulates where the parser is in the current source file.
@@ -459,6 +475,8 @@ class Parser : public ParserState {
     known_attributes_["cpp_type"] = true;
     known_attributes_["cpp_ptr_type"] = true;
     known_attributes_["native_inline"] = true;
+    known_attributes_["native_type"] = true;
+    known_attributes_["native_default"] = true;
   }
 
   ~Parser() {
@@ -573,6 +591,7 @@ private:
 
   std::map<std::string, bool> included_files_;
   std::map<std::string, std::set<std::string>> files_included_per_file_;
+  std::vector<std::string> native_included_files_;
 
   std::map<std::string, bool> known_attributes_;
 
@@ -591,13 +610,6 @@ private:
 // Utility functions for multiple generators:
 
 extern std::string MakeCamel(const std::string &in, bool first = true);
-
-struct CommentConfig;
-
-extern void GenComment(const std::vector<std::string> &dc,
-                       std::string *code_ptr,
-                       const CommentConfig *config,
-                       const char *prefix = "");
 
 // Generate text (JSON) from a given FlatBuffer, and a given Parser
 // object that has been populated with the corresponding schema.

@@ -149,8 +149,7 @@ std::string Namespace::GetFullyQualifiedName(const std::string &name,
     }
     stream << components[i];
   }
-
-  stream << "." << name;
+  if (name.length()) stream << "." << name;
   return stream.str();
 }
 
@@ -175,7 +174,8 @@ std::string Namespace::GetFullyQualifiedName(const std::string &name,
   TD(Include, 269, "include") \
   TD(Attribute, 270, "attribute") \
   TD(Null, 271, "null") \
-  TD(Service, 272, "rpc_service")
+  TD(Service, 272, "rpc_service") \
+  TD(NativeInclude, 273, "native_include")
 #ifdef __GNUC__
 __extension__  // Stop GCC complaining about trailing comma with -Wpendantic.
 #endif
@@ -433,6 +433,10 @@ CheckedError Parser::Next() {
             token_ = kTokenService;
             return NoError();
           }
+          if (attribute_ == "native_include") {
+            token_ = kTokenNativeInclude;
+            return NoError();
+          }
           // If not, it is a user-defined identifier:
           token_ = kTokenIdentifier;
           return NoError();
@@ -550,12 +554,6 @@ CheckedError Parser::ParseType(Type &type) {
         return Error(
               "nested vector types not supported (wrap in table first).");
       }
-      if (subtype.base_type == BASE_TYPE_UNION) {
-        // We could support this if we stored a struct of 2 elements per
-        // union element.
-        return Error(
-              "vector of union types not supported (wrap in table first).");
-      }
       type = Type(BASE_TYPE_VECTOR, subtype.struct_def, subtype.enum_def);
       type.element = subtype.base_type;
       EXPECT(']');
@@ -607,6 +605,19 @@ CheckedError Parser::ParseField(StructDef &struct_def) {
     // with a special suffix.
     ECHECK(AddField(struct_def, name + UnionTypeFieldSuffix(),
                     type.enum_def->underlying_type, &typefield));
+  } else if (type.base_type == BASE_TYPE_VECTOR &&
+             type.element == BASE_TYPE_UNION) {
+    // Only cpp supports the union vector feature so far.
+    if (opts.lang_to_generate != IDLOptions::kCpp) {
+      return Error("Vectors of unions are not yet supported in all "
+                   "the specified programming languages.");
+    }
+    // For vector of union fields, add a second auto-generated vector field to
+    // hold the types, with a special suffix.
+    Type union_vector(BASE_TYPE_VECTOR, nullptr, type.enum_def);
+    union_vector.element = BASE_TYPE_UTYPE;
+    ECHECK(AddField(struct_def, name + UnionTypeFieldSuffix(),
+                    union_vector, &typefield));
   }
 
   FieldDef *field;
@@ -723,8 +734,17 @@ CheckedError Parser::ParseAnyValue(Value &val, FieldDef *field,
     case BASE_TYPE_UNION: {
       assert(field);
       std::string constant;
-      if (!parent_fieldn ||
-          field_stack_.back().second->value.type.base_type != BASE_TYPE_UTYPE) {
+      // Find corresponding type field we may have already parsed.
+      for (auto elem = field_stack_.rbegin();
+           elem != field_stack_.rbegin() + parent_fieldn; ++elem) {
+        auto &type = elem->second->value.type;
+        if (type.base_type == BASE_TYPE_UTYPE &&
+            type.enum_def == val.type.enum_def) {
+          constant = elem->first.constant;
+          break;
+        }
+      }
+      if (constant.empty()) {
         // We haven't seen the type field yet. Sadly a lot of JSON writers
         // output these in alphabetical order, meaning it comes after this
         // value. So we scan past the value to find it, then come back here.
@@ -751,8 +771,6 @@ CheckedError Parser::ParseAnyValue(Value &val, FieldDef *field,
         constant = type_val.constant;
         // Got the information we needed, now rewind:
         *static_cast<ParserState *>(this) = backup;
-      } else {
-        constant = field_stack_.back().first.constant;
       }
       uint8_t enum_idx;
       ECHECK(atot(constant.c_str(), *this, &enum_idx));
@@ -831,16 +849,18 @@ CheckedError Parser::ParseTable(const StructDef &struct_def, std::string *value,
       } else {
         Value val = field->value;
         ECHECK(ParseAnyValue(val, field, fieldn, &struct_def));
-        size_t i = field_stack_.size();
         // Hardcoded insertion-sort with error-check.
         // If fields are specified in order, then this loop exits immediately.
-        for (; i > field_stack_.size() - fieldn; i--) {
-          auto existing_field = field_stack_[i - 1].second;
+        auto elem = field_stack_.rbegin();
+        for (; elem != field_stack_.rbegin() + fieldn; ++elem) {
+          auto existing_field = elem->second;
           if (existing_field == field)
             return Error("field set more than once: " + field->name);
           if (existing_field->value.offset < field->value.offset) break;
         }
-        field_stack_.insert(field_stack_.begin() + i, std::make_pair(val, field));
+        // Note: elem points to before the insertion point, thus .base() points
+        // to the correct spot.
+        field_stack_.insert(elem.base(), std::make_pair(val, field));
         fieldn++;
       }
     }
@@ -1849,6 +1869,10 @@ CheckedError Parser::DoParse(const char *source, const char **include_paths,
         (attribute_ == "option" || attribute_ == "syntax" ||
          attribute_ == "package")) {
         ECHECK(ParseProtoDecl());
+    } else if (Is(kTokenNativeInclude)) {
+      NEXT();
+      native_included_files_.emplace_back(attribute_);
+      EXPECT(kTokenStringConstant);
     } else if (Is(kTokenInclude) ||
                (opts.proto_mode &&
                 attribute_ == "import" &&
