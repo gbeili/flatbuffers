@@ -1340,6 +1340,12 @@ void UnionVectorTest() {
   const MuLan *mu_lan =
       reinterpret_cast<const MuLan*>(movie->characters()->Get(2));
   TEST_EQ(mu_lan->sword_attack_damage(), 5);
+
+  std::string jsongen;
+  const auto result = GenerateText(parser, buf, &jsongen);
+  TEST_EQ(result, true);
+  TEST_EQ(jsongen.empty(), false);
+  TEST_EQ(jsongen.c_str(), "");
 }
 
 void ConformTest() {

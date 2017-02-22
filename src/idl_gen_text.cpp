@@ -176,13 +176,28 @@ template<> bool Print<const void *>(const void *val,
     case BASE_TYPE_UNION:
       // If this assert hits, you have an corrupt buffer, a union type field
       // was not present or was out of range.
-      assert(union_sd);
-      if (!GenStruct(*union_sd,
-                     reinterpret_cast<const Table *>(val),
-                     indent,
-                     opts,
-                     _text)) {
-        return false;
+      if (union_sd != NULL) {
+        if (!GenStruct(*union_sd,
+                       reinterpret_cast<const Table *>(val),
+                       indent,
+                       opts,
+                       _text)) {
+          return false;
+        }
+      } else {
+        // The union vector enters this code path, which I did not expect.
+        // I thought it would enter the BASE_TYPE_VECTOR. Any idea?
+        // Plus, to printout correctly, `stub_sd` needs to be populated with
+        // right info. Here the inputs are `type` and `val`.
+        // Not sure how to use that?
+        StructDef stub_sd;
+        if (!GenStruct(stub_sd,
+                       reinterpret_cast<const Table *>(val),
+                       indent,
+                       opts,
+                       _text)) {
+          return false;
+        }
       }
       break;
     case BASE_TYPE_STRUCT:
