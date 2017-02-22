@@ -616,7 +616,8 @@ CheckedError Parser::ParseField(StructDef &struct_def) {
   } else if (type.base_type == BASE_TYPE_VECTOR &&
              type.element == BASE_TYPE_UNION) {
     // Only cpp supports the union vector feature so far.
-    if (opts.lang_to_generate != IDLOptions::kCpp) {
+    if (opts.lang_to_generate != IDLOptions::kCpp &&
+        opts.lang_to_generate != IDLOptions::kJson) {
       return Error("Vectors of unions are not yet supported in all "
                    "the specified programming languages.");
     }
